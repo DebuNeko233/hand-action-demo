@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 import sys
+from collections import Counter, defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -114,17 +115,24 @@ def ensure_annotations(root: Path, token: str | None) -> Path:
     return normalize_annotation_dir(root, existing)
 
 
-def recordings_from_split(annotation_dir: Path, split_file: str, labels: set[str] | None = None) -> list[str]:
-    recordings: set[str] = set()
+def recording_verb_counts(annotation_dir: Path, split_file: str, labels: set[str] | None = None) -> dict[str, Counter[str]]:
+    counts: dict[str, Counter[str]] = defaultdict(Counter)
     path = annotation_dir / split_file
     with path.open("r", encoding="utf-8-sig", newline="") as f:
         for row in csv.DictReader(f):
-            if labels is not None and row.get("verb_cls", "").strip().lower() not in labels:
+            verb = row.get("verb_cls", "").strip().lower()
+            if labels is not None and verb not in labels:
                 continue
             video = row.get("video", "").replace("\\", "/")
-            if "/" in video:
-                recordings.add(video.split("/", 1)[0])
-    return sorted(recordings)
+            if "/" not in video:
+                continue
+            recording = video.split("/", 1)[0]
+            counts[recording][verb] += 1
+    return dict(counts)
+
+
+def recordings_from_split(annotation_dir: Path, split_file: str, labels: set[str] | None = None) -> list[str]:
+    return sorted(recording_verb_counts(annotation_dir, split_file, labels))
 
 
 def recordings_from_annotations(annotation_dir: Path, labels: set[str] | None = None) -> list[str]:
@@ -134,15 +142,48 @@ def recordings_from_annotations(annotation_dir: Path, labels: set[str] | None = 
     return sorted(recordings)
 
 
-def recordings_per_split(annotation_dir: Path, labels: set[str] | None, max_per_split: int) -> dict[str, list[str]]:
+def select_covering_recordings(
+    annotation_dir: Path,
+    split_file: str,
+    labels: set[str] | None,
+    max_recordings: int,
+) -> tuple[list[str], set[str], dict[str, Counter[str]]]:
+    counts = recording_verb_counts(annotation_dir, split_file, labels)
+    if not counts:
+        return [], set(), {}
+    target_labels = set(labels) if labels is not None else {verb for c in counts.values() for verb in c}
+    remaining = dict(counts)
+    selected: list[str] = []
+    covered: set[str] = set()
+
+    while remaining and (max_recordings <= 0 or len(selected) < max_recordings):
+        def score(item: tuple[str, Counter[str]]) -> tuple[int, int, int, str]:
+            name, verb_counts = item
+            verbs = set(verb_counts)
+            new_coverage = len(verbs - covered)
+            target_count = sum(verb_counts[v] for v in target_labels if v in verb_counts)
+            balance = min((verb_counts[v] for v in target_labels if v in verb_counts), default=0)
+            return new_coverage, len(verbs & target_labels), balance + target_count, name
+
+        best_name, best_counts = max(remaining.items(), key=score)
+        selected.append(best_name)
+        covered.update(best_counts)
+        del remaining[best_name]
+        if covered >= target_labels:
+            break
+
+    return selected, covered & target_labels, counts
+
+
+def recordings_per_split(annotation_dir: Path, labels: set[str] | None, max_per_split: int) -> tuple[dict[str, list[str]], dict[str, set[str]]]:
     result: dict[str, list[str]] = {}
+    coverage: dict[str, set[str]] = {}
     for split_file in REQUIRED_ANNOTATION_FILES:
         split = Path(split_file).stem
-        recordings = recordings_from_split(annotation_dir, split_file, labels)
-        if max_per_split > 0:
-            recordings = recordings[:max_per_split]
-        result[split] = recordings
-    return result
+        selected, covered, _ = select_covering_recordings(annotation_dir, split_file, labels, max_per_split)
+        result[split] = selected
+        coverage[split] = covered
+    return result, coverage
 
 
 def hf_recording_patterns(videos: list[str], views: str) -> list[str]:
@@ -216,7 +257,7 @@ def main() -> None:
     ap.add_argument("--labels", default=None,
                     help="Optional comma-separated verb labels used to choose recordings, e.g. 'pick up,screw,unscrew'.")
     ap.add_argument("--max-recordings", type=int, default=0,
-                    help="When --videos=all, download up to N matching recordings from EACH official split.")
+                    help="When --videos=all, choose up to N recordings from EACH official split, prioritizing target-verb coverage.")
     ap.add_argument("--hf-token", default=None,
                     help="Hugging Face token; HF_TOKEN environment variable is also supported.")
     ap.add_argument("--skip-annotations", action="store_true")
@@ -244,11 +285,16 @@ def main() -> None:
             annotation_dir = ensure_annotations(root, args.hf_token)
         label_filter = {x.lower() for x in split_csv_arg(args.labels)} or None
         if args.max_recordings > 0:
-            by_split = recordings_per_split(annotation_dir, label_filter, args.max_recordings)
+            by_split, coverage = recordings_per_split(annotation_dir, label_filter, args.max_recordings)
             videos = sorted({name for names in by_split.values() for name in names})
             print("Selected recordings per official split:")
             for split, names in by_split.items():
-                print(f"  {split}: {len(names)}")
+                covered = ", ".join(sorted(coverage[split])) or "none"
+                print(f"  {split}: {len(names)} recording(s), covered verbs: {covered}")
+                if label_filter is not None:
+                    missing = sorted(label_filter - coverage[split])
+                    if missing:
+                        print(f"    missing with current --max-recordings: {', '.join(missing)}")
         else:
             videos = recordings_from_annotations(annotation_dir, label_filter)
         if not videos:

@@ -5,6 +5,7 @@ import csv
 import json
 import re
 import sys
+from collections import Counter
 from pathlib import Path
 
 import cv2
@@ -113,7 +114,8 @@ def main() -> None:
     ap.add_argument("--labels", type=str, default=None)
     ap.add_argument("--splits", nargs="+", choices=list(SPLIT_FILES), default=list(SPLIT_FILES))
     ap.add_argument("--min-hand-ratio", type=float, default=0.60)
-    ap.add_argument("--limit", type=int, default=0, help="Maximum accepted samples per split; 0 means unlimited.")
+    ap.add_argument("--limit", type=int, default=0,
+                    help="Maximum accepted samples PER CLASS in each split; 0 means unlimited.")
     args = ap.parse_args()
 
     if not HAND_LANDMARKER_MODEL_PATH.exists():
@@ -130,7 +132,7 @@ def main() -> None:
     metadata_exists = metadata_path.exists()
     tracker = HandTracker(HAND_LANDMARKER_MODEL_PATH, max_num_hands=1, running_mode="image")
     class_names: set[str] = set()
-    stats: dict[str, dict[str, int]] = {}
+    stats: dict[str, dict[str, object]] = {}
 
     try:
         with metadata_path.open("a", encoding="utf-8", newline="") as meta_f:
@@ -142,6 +144,7 @@ def main() -> None:
                 rows = load_rows(args.annotation_dir, split)
                 filtered_rows: list[dict[str, str]] = []
                 skipped_filter = skipped_missing_video = 0
+                available_by_class: Counter[str] = Counter()
                 for row in rows:
                     label_text = row["verb_cls"] if args.label_level == "verb" else row["action_cls"]
                     if label_filter is not None and label_text.strip().lower() not in label_filter:
@@ -152,11 +155,24 @@ def main() -> None:
                         skipped_missing_video += 1
                         continue
                     filtered_rows.append(row)
+                    available_by_class[slugify(label_text)] += 1
 
                 print(f"{split}: local target segments={len(filtered_rows)} (filtered={skipped_filter}, missing_video={skipped_missing_video})")
-                accepted = skipped_hand = 0
+                print(f"{split}: available by class={dict(sorted(available_by_class.items()))}")
+
+                accepted_by_class: Counter[str] = Counter()
+                accepted = skipped_hand = skipped_limit = 0
+                target_classes = set(available_by_class)
+
                 for row in tqdm(filtered_rows, desc=f"Assembly101 {split}"):
                     label_text = row["verb_cls"] if args.label_level == "verb" else row["action_cls"]
+                    label = slugify(label_text)
+                    if args.limit > 0 and accepted_by_class[label] >= args.limit:
+                        skipped_limit += 1
+                        if target_classes and all(accepted_by_class[c] >= args.limit for c in target_classes):
+                            break
+                        continue
+
                     video_rel = row["video"].replace("\\", "/")
                     features, hand_ratio = extract_segment(
                         args.video_root / video_rel,
@@ -169,7 +185,7 @@ def main() -> None:
                     if features is None:
                         skipped_hand += 1
                         continue
-                    label = slugify(label_text)
+
                     out_dir = args.output / split / label
                     out_dir.mkdir(parents=True, exist_ok=True)
                     sample_id = f"{split}_{int(row['id']):08d}"
@@ -186,15 +202,20 @@ def main() -> None:
                     })
                     meta_f.flush()
                     accepted += 1
-                    if args.limit > 0 and accepted >= args.limit:
+                    accepted_by_class[label] += 1
+
+                    if args.limit > 0 and target_classes and all(accepted_by_class[c] >= args.limit for c in target_classes):
                         break
 
                 stats[split] = {
                     "available_target_segments": len(filtered_rows),
+                    "available_by_class": dict(sorted(available_by_class.items())),
                     "accepted": accepted,
+                    "accepted_by_class": dict(sorted(accepted_by_class.items())),
                     "skipped_filter": skipped_filter,
                     "skipped_missing_video": skipped_missing_video,
                     "skipped_hand": skipped_hand,
+                    "skipped_limit": skipped_limit,
                 }
     finally:
         tracker.close()
