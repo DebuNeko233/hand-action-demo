@@ -39,6 +39,11 @@ This project supports both video sources:
 - `--source hf` (default, recommended)
 - `--source gdrive` (wraps the official GitHub downloader)
 
+For Hugging Face downloads, the project also supports:
+
+- `--mirror official` (default, `https://huggingface.co`)
+- `--mirror cn` (`https://hf-mirror.com`)
+
 The annotation CSV files are downloaded from the official gated Hugging Face Assembly101 release. The public `assembly-101/assembly101-annotations` GitHub repository is useful for annotation-format documentation, but it does not contain the actual `train.csv`, `validation.csv`, and `test.csv` files in Git.
 
 ## 1. Install dependencies and MediaPipe model
@@ -50,7 +55,7 @@ python tools/download_models.py
 
 First accept the Assembly101 dataset access terms in your Hugging Face account, then either log in with the Hugging Face CLI or set `HF_TOKEN`. This is required for the annotation CSVs as well as Hugging Face video downloads.
 
-## 2. Recommended smoke test: download one recording
+## 2. Recommended smoke test
 
 Do this before downloading a large portion of the dataset:
 
@@ -60,7 +65,19 @@ python tools/assembly101_pipeline.py \
   --views v8 \
   --labels "pick up,put down,position,screw,unscrew" \
   --max-recordings 1 \
-  --limit 20
+  --limit 5
+```
+
+For mainland China, add `--mirror cn`:
+
+```bash
+python tools/assembly101_pipeline.py \
+  --source hf \
+  --mirror cn \
+  --views v8 \
+  --labels "pick up,put down,position,screw,unscrew" \
+  --max-recordings 1 \
+  --limit 5
 ```
 
 Windows PowerShell:
@@ -68,23 +85,24 @@ Windows PowerShell:
 ```powershell
 python tools/assembly101_pipeline.py `
   --source hf `
+  --mirror cn `
   --views v8 `
   --labels "pick up,put down,position,screw,unscrew" `
   --max-recordings 1 `
-  --limit 20
+  --limit 5
 ```
 
 This command performs:
 
 1. download the official annotation CSVs;
 2. find recordings containing the selected verb labels;
-3. download one matching recording from the official Hugging Face dataset;
-4. download only fixed RGB view `v8` (`C10404_rgb.mp4`);
+3. choose recordings that maximize target-verb coverage in each official split;
+4. download fixed RGB view `v8` (`C10404_rgb.mp4`);
 5. sample each annotated action interval;
 6. run MediaPipe Hands;
 7. generate `30 x 66` `.npy` samples.
 
-Add `--train` if you also want to train the LSTM immediately.
+`--limit N` limits accepted samples per class in each split. Add `--train` if you also want to train the LSTM immediately.
 
 ## 3. Full selected-action pipeline
 
@@ -93,6 +111,17 @@ After the smoke test succeeds, remove `--max-recordings` and `--limit`:
 ```bash
 python tools/assembly101_pipeline.py \
   --source hf \
+  --views v8 \
+  --labels "pick up,put down,position,screw,unscrew" \
+  --train
+```
+
+In mainland China:
+
+```bash
+python tools/assembly101_pipeline.py \
+  --source hf \
+  --mirror cn \
   --views v8 \
   --labels "pick up,put down,position,screw,unscrew" \
   --train
@@ -119,6 +148,7 @@ If you want to separate downloading from preprocessing:
 ```bash
 python tools/download_assembly101.py \
   --source hf \
+  --mirror cn \
   --views v8 \
   --labels "pick up,screw,unscrew" \
   --max-recordings 5
@@ -148,23 +178,25 @@ python tools/prepare_assembly101.py \
   --labels "pick up,screw,unscrew"
 ```
 
-## 5. Hugging Face source
+## 5. Hugging Face source and mirror
 
-The Hugging Face release is gated. You must accept the dataset terms before files can be downloaded.
+The Hugging Face release is gated. You must accept the dataset terms before files can be downloaded. A mirror changes the endpoint only; it does not remove the need for Hugging Face access permission or a token.
 
 You can provide the token through the environment:
 
 ```bash
 export HF_TOKEN=hf_xxx
-python tools/download_assembly101.py --source hf --views v8 --max-recordings 1
+python tools/download_assembly101.py --source hf --mirror cn --views v8 --max-recordings 1
 ```
 
 Windows PowerShell:
 
 ```powershell
 $env:HF_TOKEN="hf_xxx"
-python tools/download_assembly101.py --source hf --views v8 --max-recordings 1
+python tools/download_assembly101.py --source hf --mirror cn --views v8 --max-recordings 1
 ```
+
+`--mirror cn` sets `HF_ENDPOINT=https://hf-mirror.com` inside the downloader before `huggingface_hub` is imported. You therefore do not need to export `HF_ENDPOINT` manually. Use `--mirror official` to force the normal Hugging Face endpoint.
 
 Or pass `--hf-token` directly. Environment variables are preferred so the token does not appear in shell history.
 

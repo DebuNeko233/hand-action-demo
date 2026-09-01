@@ -1,8 +1,11 @@
 import csv
+import os
 from pathlib import Path
 
 from tools.download_assembly101 import (
     FIXED_VIEWS,
+    HF_CN_ENDPOINT,
+    configure_hf_endpoint,
     hf_recording_patterns,
     recordings_from_annotations,
     select_covering_recordings,
@@ -57,6 +60,13 @@ def test_single_recording_prefers_maximum_target_verb_coverage(tmp_path: Path):
     selected, covered, _ = select_covering_recordings(tmp_path, "train.csv", labels, 1)
     assert selected == ["rec_b"]
     assert covered == labels
+
+
+def test_cn_mirror_sets_hf_endpoint(monkeypatch):
+    monkeypatch.delenv("HF_ENDPOINT", raising=False)
+    endpoint = configure_hf_endpoint("cn")
+    assert endpoint == HF_CN_ENDPOINT
+    assert os.environ["HF_ENDPOINT"] == HF_CN_ENDPOINT
 
 
 def test_split_videos():

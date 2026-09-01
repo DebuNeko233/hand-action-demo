@@ -22,6 +22,8 @@ def main() -> None:
     ap.add_argument("--output", type=Path, default=ROOT / "dataset_assembly101",
                     help="Generated 30x66 MediaPipe feature dataset.")
     ap.add_argument("--source", choices=["hf", "gdrive"], default="hf")
+    ap.add_argument("--mirror", choices=["official", "cn"], default="official",
+                    help="Hugging Face endpoint. 'cn' uses https://hf-mirror.com.")
     ap.add_argument("--views", default="v8",
                     help="v1..v8, e1..e4, fixed, egocentric or all. Default: v8 fixed RGB.")
     ap.add_argument("--videos", default="all",
@@ -33,7 +35,7 @@ def main() -> None:
     ap.add_argument("--hf-token", default=None)
     ap.add_argument("--min-hand-ratio", type=float, default=0.60)
     ap.add_argument("--limit", type=int, default=0,
-                    help="Maximum accepted feature samples per split; 0 means unlimited.")
+                    help="Maximum accepted feature samples per class in each split; 0 means unlimited.")
     ap.add_argument("--skip-download", action="store_true")
     ap.add_argument("--skip-prepare", action="store_true")
     ap.add_argument("--train", action="store_true")
@@ -57,6 +59,7 @@ def main() -> None:
             sys.executable, "tools/download_assembly101.py",
             "--root", str(root),
             "--source", args.source,
+            "--mirror", args.mirror,
             "--views", args.views,
             "--videos", args.videos,
         ]
