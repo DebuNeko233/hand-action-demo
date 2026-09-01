@@ -34,12 +34,12 @@ Object identity should later come from YOLO / hand-object relation logic.
 
 The official `assembly-101/assembly101-download-scripts` repository historically downloads recordings from Google Drive. As of May 2026, the maintainers also distribute Assembly101 through the gated Hugging Face dataset `cvml-nus/assembly101` and state that Hugging Face is the long-term distribution path.
 
-This project supports both sources:
+This project supports both video sources:
 
 - `--source hf` (default, recommended)
 - `--source gdrive` (wraps the official GitHub downloader)
 
-Official annotations are cloned automatically from `assembly-101/assembly101-annotations`.
+The annotation CSV files are downloaded from the official gated Hugging Face Assembly101 release. The public `assembly-101/assembly101-annotations` GitHub repository is useful for annotation-format documentation, but it does not contain the actual `train.csv`, `validation.csv`, and `test.csv` files in Git.
 
 ## 1. Install dependencies and MediaPipe model
 
@@ -48,7 +48,7 @@ pip install -r requirements.txt
 python tools/download_models.py
 ```
 
-For Hugging Face, first accept the Assembly101 dataset access terms in your Hugging Face account, then either log in with the Hugging Face CLI or set `HF_TOKEN`.
+First accept the Assembly101 dataset access terms in your Hugging Face account, then either log in with the Hugging Face CLI or set `HF_TOKEN`. This is required for the annotation CSVs as well as Hugging Face video downloads.
 
 ## 2. Recommended smoke test: download one recording
 
@@ -76,7 +76,7 @@ python tools/assembly101_pipeline.py `
 
 This command performs:
 
-1. clone/update official annotations;
+1. download the official annotation CSVs;
 2. find recordings containing the selected verb labels;
 3. download one matching recording from the official Hugging Face dataset;
 4. download only fixed RGB view `v8` (`C10404_rgb.mp4`);
@@ -168,7 +168,7 @@ python tools/download_assembly101.py --source hf --views v8 --max-recordings 1
 
 Or pass `--hf-token` directly. Environment variables are preferred so the token does not appear in shell history.
 
-## 6. Google Drive compatibility
+## 6. Google Drive video compatibility
 
 The `gdrive` source automatically clones and invokes the official repository:
 
@@ -176,7 +176,7 @@ The `gdrive` source automatically clones and invokes the official repository:
 https://github.com/assembly-101/assembly101-download-scripts
 ```
 
-The official downloader requires Google Drive access, `client_secrets.json`, and browser authentication at least once.
+The official downloader requires Google Drive access, `client_secrets.json`, and browser authentication at least once. Annotation CSVs are still obtained from the official Hugging Face release so the rest of this project's directory layout is identical for both video sources.
 
 Example:
 
