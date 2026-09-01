@@ -2,6 +2,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+import platform
 import cv2
 import numpy as np
 
@@ -31,6 +32,20 @@ class HandTracker:
         except ImportError as exc:
             raise RuntimeError("mediapipe is not installed. Run pip install -r requirements.txt") from exc
 
+        # mediapipe 1.0.1 currently aborts inside DrishtiMetalHelper while opening
+        # HandLandmarker graphs on Apple Silicon macOS. Native SIGABRT cannot be
+        # caught by Python, so fail before graph construction with an actionable
+        # environment fix instead of crashing the whole preprocessing job.
+        mp_version = getattr(mp, "__version__", "unknown")
+        if platform.system() == "Darwin" and platform.machine() == "arm64" and mp_version == "1.0.1":
+            raise RuntimeError(
+                "mediapipe 1.0.1 is not supported for HandLandmarker on Apple Silicon in this project "
+                "because it can abort inside DrishtiMetalHelper. Reinstall project dependencies with:\n"
+                "  python -m pip uninstall -y mediapipe\n"
+                "  python -m pip install -r requirements.txt\n"
+                "This installs mediapipe==0.10.30 on arm64 macOS."
+            )
+
         mode = running_mode.strip().lower()
         if mode not in {"video", "image"}:
             raise ValueError("running_mode must be 'video' or 'image'")
@@ -43,8 +58,6 @@ class HandTracker:
         RunningMode = mp.tasks.vision.RunningMode
         mp_running_mode = RunningMode.VIDEO if mode == "video" else RunningMode.IMAGE
 
-        # Be explicit about CPU. MediaPipe's Python docs state that GPU support is
-        # limited, and macOS Metal paths have had native-crash regressions.
         base_options = BaseOptions(
             model_asset_path=str(model_path),
             delegate=BaseOptions.Delegate.CPU,
