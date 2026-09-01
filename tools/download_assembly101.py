@@ -114,18 +114,35 @@ def ensure_annotations(root: Path, token: str | None) -> Path:
     return normalize_annotation_dir(root, existing)
 
 
+def recordings_from_split(annotation_dir: Path, split_file: str, labels: set[str] | None = None) -> list[str]:
+    recordings: set[str] = set()
+    path = annotation_dir / split_file
+    with path.open("r", encoding="utf-8-sig", newline="") as f:
+        for row in csv.DictReader(f):
+            if labels is not None and row.get("verb_cls", "").strip().lower() not in labels:
+                continue
+            video = row.get("video", "").replace("\\", "/")
+            if "/" in video:
+                recordings.add(video.split("/", 1)[0])
+    return sorted(recordings)
+
+
 def recordings_from_annotations(annotation_dir: Path, labels: set[str] | None = None) -> list[str]:
     recordings: set[str] = set()
     for split_file in REQUIRED_ANNOTATION_FILES:
-        path = annotation_dir / split_file
-        with path.open("r", encoding="utf-8-sig", newline="") as f:
-            for row in csv.DictReader(f):
-                if labels is not None and row.get("verb_cls", "").strip().lower() not in labels:
-                    continue
-                video = row.get("video", "").replace("\\", "/")
-                if "/" in video:
-                    recordings.add(video.split("/", 1)[0])
+        recordings.update(recordings_from_split(annotation_dir, split_file, labels))
     return sorted(recordings)
+
+
+def recordings_per_split(annotation_dir: Path, labels: set[str] | None, max_per_split: int) -> dict[str, list[str]]:
+    result: dict[str, list[str]] = {}
+    for split_file in REQUIRED_ANNOTATION_FILES:
+        split = Path(split_file).stem
+        recordings = recordings_from_split(annotation_dir, split_file, labels)
+        if max_per_split > 0:
+            recordings = recordings[:max_per_split]
+        result[split] = recordings
+    return result
 
 
 def hf_recording_patterns(videos: list[str], views: str) -> list[str]:
@@ -174,8 +191,6 @@ def download_gdrive(
     if authenticate:
         run([sys.executable, "authenticate.py"], cwd=tool_dir)
 
-    # The upstream CLI accepts one recording name at a time (or 'all'), so run
-    # it repeatedly when our wrapper receives a selected recording list.
     for video in videos:
         cmd = [
             sys.executable,
@@ -185,7 +200,6 @@ def download_gdrive(
             "--outDir", str(root / "recordings"),
         ]
         if resume:
-            # Upstream currently declares --resume as type=bool.
             cmd.extend(["--resume", "True"])
         run(cmd, cwd=tool_dir)
 
@@ -202,7 +216,7 @@ def main() -> None:
     ap.add_argument("--labels", default=None,
                     help="Optional comma-separated verb labels used to choose recordings, e.g. 'pick up,screw,unscrew'.")
     ap.add_argument("--max-recordings", type=int, default=0,
-                    help="When --videos=all, restrict to the first N recordings matched by --labels.")
+                    help="When --videos=all, download up to N matching recordings from EACH official split.")
     ap.add_argument("--hf-token", default=None,
                     help="Hugging Face token; HF_TOKEN environment variable is also supported.")
     ap.add_argument("--skip-annotations", action="store_true")
@@ -229,12 +243,17 @@ def main() -> None:
         if annotation_dir is None:
             annotation_dir = ensure_annotations(root, args.hf_token)
         label_filter = {x.lower() for x in split_csv_arg(args.labels)} or None
-        videos = recordings_from_annotations(annotation_dir, label_filter)
         if args.max_recordings > 0:
-            videos = videos[:args.max_recordings]
+            by_split = recordings_per_split(annotation_dir, label_filter, args.max_recordings)
+            videos = sorted({name for names in by_split.values() for name in names})
+            print("Selected recordings per official split:")
+            for split, names in by_split.items():
+                print(f"  {split}: {len(names)}")
+        else:
+            videos = recordings_from_annotations(annotation_dir, label_filter)
         if not videos:
             raise RuntimeError("No Assembly101 recordings matched the requested verb labels.")
-        print(f"Selected {len(videos)} recordings from official annotations.")
+        print(f"Total unique recordings selected: {len(videos)}")
 
     if args.source == "hf":
         download_hf(root, videos, args.views, args.hf_token)
