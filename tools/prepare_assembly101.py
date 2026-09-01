@@ -44,6 +44,18 @@ def parse_filter(value: str | None) -> set[str] | None:
     return set(items) if items else None
 
 
+def parse_recordings(value: str | None) -> set[str] | None:
+    if not value:
+        return None
+    p = Path(value)
+    if p.exists():
+        items = [line.strip() for line in p.read_text(encoding="utf-8").splitlines()]
+    else:
+        items = [x.strip() for x in value.split(",")]
+    items = [x for x in items if x]
+    return set(items) if items else None
+
+
 def load_rows(annotation_dir: Path, split: str) -> list[dict[str, str]]:
     path = annotation_dir / SPLIT_FILES[split]
     if not path.exists():
@@ -129,6 +141,12 @@ def main() -> None:
     ap.add_argument("--output", type=Path, default=ROOT / "dataset_assembly101")
     ap.add_argument("--label-level", choices=["verb", "action"], default="verb")
     ap.add_argument("--labels", type=str, default=None)
+    ap.add_argument(
+        "--recordings",
+        type=str,
+        default=None,
+        help="Optional comma-separated recording whitelist or text file with one recording per line.",
+    )
     ap.add_argument("--splits", nargs="+", choices=list(SPLIT_FILES), default=list(SPLIT_FILES))
     ap.add_argument("--min-hand-ratio", type=float, default=0.60)
     ap.add_argument("--limit", type=int, default=0,
@@ -150,10 +168,13 @@ def main() -> None:
         )
 
     label_filter = parse_filter(args.labels)
+    recording_filter = parse_recordings(args.recordings)
     video_index = local_video_index(args.video_root)
     if not video_index:
         raise RuntimeError(f"No .mp4 files found under {args.video_root}")
     print(f"Indexed {len(video_index)} local Assembly101 video(s).")
+    if recording_filter is not None:
+        print(f"Restricting preprocessing to {len(recording_filter)} selected recording(s).")
 
     args.output.mkdir(parents=True, exist_ok=True)
     metadata_path = args.output / "metadata.csv"
@@ -177,7 +198,7 @@ def main() -> None:
             for split in args.splits:
                 rows = load_rows(args.annotation_dir, split)
                 filtered_rows: list[dict[str, str]] = []
-                skipped_filter = skipped_missing_video = 0
+                skipped_filter = skipped_missing_video = skipped_recording_filter = 0
                 available_by_class: Counter[str] = Counter()
                 for row in rows:
                     label_text = row["verb_cls"] if args.label_level == "verb" else row["action_cls"]
@@ -185,6 +206,10 @@ def main() -> None:
                         skipped_filter += 1
                         continue
                     video_rel = row["video"].replace("\\", "/")
+                    recording = video_rel.split("/", 1)[0]
+                    if recording_filter is not None and recording not in recording_filter:
+                        skipped_recording_filter += 1
+                        continue
                     if video_rel not in video_index:
                         skipped_missing_video += 1
                         continue
@@ -197,7 +222,8 @@ def main() -> None:
 
                 print(
                     f"{split}: local target segments={len(filtered_rows)} "
-                    f"(filtered={skipped_filter}, missing_video={skipped_missing_video})"
+                    f"(filtered={skipped_filter}, recording_filter={skipped_recording_filter}, "
+                    f"missing_video={skipped_missing_video})"
                 )
                 print(f"{split}: available by class={dict(sorted(available_by_class.items()))}")
                 print(f"{split}: per-class target={current_limit if current_limit > 0 else 'unlimited'} seed={args.seed}")
@@ -269,6 +295,7 @@ def main() -> None:
                     "accepted_recordings": len(accepted_recordings),
                     "accepted_recording_names": sorted(accepted_recordings),
                     "skipped_filter": skipped_filter,
+                    "skipped_recording_filter": skipped_recording_filter,
                     "skipped_missing_video": skipped_missing_video,
                     "skipped_hand": skipped_hand,
                     "skipped_limit": skipped_limit,
@@ -284,6 +311,7 @@ def main() -> None:
         "label_level": args.label_level,
         "class_names": sorted(class_names),
         "sampling_seed": args.seed,
+        "selected_recordings": sorted(recording_filter) if recording_filter is not None else None,
         "stats": stats,
     }
     (args.output / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
