@@ -21,18 +21,19 @@ def main() -> None:
                     help="Raw Assembly101 root (recordings + official annotations).")
     ap.add_argument("--output", type=Path, default=ROOT / "dataset_assembly101",
                     help="Generated 30x66 MediaPipe feature dataset.")
-    ap.add_argument("--source", choices=["hf", "gdrive"], default="hf")
+    ap.add_argument("--source", choices=["hf720", "hf", "gdrive"], default="hf720",
+                    help="Default hf720 uses the public pablovela5620/assembly101-720p video variant.")
     ap.add_argument("--mirror", choices=["official", "cn"], default="official",
                     help="Hugging Face endpoint. 'cn' uses https://hf-mirror.com.")
     ap.add_argument("--views", default="v8",
                     help="v1..v8, e1..e4, fixed, egocentric or all. Default: v8 fixed RGB.")
-    ap.add_argument("--videos", default="all",
-                    help="all or comma-separated recording names.")
+    ap.add_argument("--videos", default="all", help="all or comma-separated recording names.")
     ap.add_argument("--labels", default="pick up,put down,position,screw,unscrew",
                     help="Comma-separated verb whitelist. Empty string means all verbs.")
     ap.add_argument("--max-recordings", type=int, default=0,
                     help="Limit matched recordings for a quick end-to-end test; 0 means no limit.")
-    ap.add_argument("--hf-token", default=None)
+    ap.add_argument("--hf-token", default=None,
+                    help="Only required when official gated annotations/videos must be downloaded.")
     ap.add_argument("--min-hand-ratio", type=float, default=0.60)
     ap.add_argument("--limit", type=int, default=0,
                     help="Maximum accepted feature samples per class in each split; 0 means unlimited.")
@@ -41,8 +42,6 @@ def main() -> None:
     ap.add_argument("--train", action="store_true")
     ap.add_argument("--epochs", type=int, default=60)
     ap.add_argument("--batch-size", type=int, default=64)
-
-    # Google Drive compatibility options from the official downloader repository.
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--client-secrets", type=Path, default=None)
     ap.add_argument("--credentials", type=Path, default=None)
