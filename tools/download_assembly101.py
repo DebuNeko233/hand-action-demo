@@ -11,6 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 HF_REPO_ID = "cvml-nus/assembly101"
+HF_CN_ENDPOINT = "https://hf-mirror.com"
 OFFICIAL_DOWNLOADER_REPO = "https://github.com/assembly-101/assembly101-download-scripts.git"
 
 FIXED_VIEWS = {
@@ -49,6 +50,18 @@ def split_videos(value: str) -> list[str]:
     if not value or value == "all":
         return ["all"]
     return split_csv_arg(value)
+
+
+def configure_hf_endpoint(mirror: str) -> str:
+    """Configure Hugging Face Hub endpoint before importing huggingface_hub."""
+    if mirror == "cn":
+        os.environ["HF_ENDPOINT"] = HF_CN_ENDPOINT
+    elif mirror == "official":
+        # Respect an explicitly supplied HF_ENDPOINT; otherwise use the official default.
+        os.environ.pop("HF_ENDPOINT", None)
+    endpoint = os.environ.get("HF_ENDPOINT", "https://huggingface.co")
+    print(f"Hugging Face endpoint: {endpoint}")
+    return endpoint
 
 
 def ensure_git_repo(url: str, target: Path, refresh: bool = False) -> None:
@@ -250,6 +263,8 @@ def main() -> None:
     ap.add_argument("--root", type=Path, default=ROOT / "data" / "assembly101")
     ap.add_argument("--source", choices=["hf", "gdrive"], default="hf",
                     help="Hugging Face is recommended; gdrive wraps assembly101-download-scripts.")
+    ap.add_argument("--mirror", choices=["official", "cn"], default="official",
+                    help="Hugging Face endpoint. 'cn' uses https://hf-mirror.com.")
     ap.add_argument("--views", choices=VIEW_CHOICES, default="v8",
                     help="Default v8 downloads one fixed RGB view. Use 'fixed' for all 8 RGB views.")
     ap.add_argument("--videos", default="all",
@@ -274,6 +289,9 @@ def main() -> None:
 
     root = args.root.resolve()
     root.mkdir(parents=True, exist_ok=True)
+
+    if args.source == "hf":
+        configure_hf_endpoint(args.mirror)
 
     annotation_dir: Path | None = None
     if not args.skip_annotations or args.max_recordings > 0 or args.labels:
