@@ -2,7 +2,7 @@ from __future__ import annotations
 import numpy as np
 
 class StatefulFeatureExtractor:
-    """63 wrist-centered landmark values + 3 wrist velocity values."""
+    """63 wrist-centered landmark values + 3 scale-normalized wrist velocity values."""
     def __init__(self) -> None:
         self.previous_wrist: np.ndarray | None = None
 
@@ -23,7 +23,9 @@ class StatefulFeatureExtractor:
         if self.previous_wrist is None:
             velocity = np.zeros(3, dtype=np.float32)
         else:
-            velocity = wrist - self.previous_wrist
+            # Keep the motion term dimensionless. This is important when training
+            # from DHG-2016 world-space skeletons and inferring from MediaPipe.
+            velocity = (wrist - self.previous_wrist) / scale
         self.previous_wrist = wrist
         feature = np.concatenate([normalized.reshape(-1), velocity], axis=0).astype(np.float32)
         if feature.shape != (66,) or not np.isfinite(feature).all():
