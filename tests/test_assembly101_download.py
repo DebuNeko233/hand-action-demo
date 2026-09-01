@@ -80,6 +80,47 @@ def test_single_recording_prefers_maximum_target_verb_coverage(tmp_path: Path):
     assert covered == labels
 
 
+def test_default_selection_stops_when_all_labels_are_covered(tmp_path: Path):
+    labels = {"pick up", "put down"}
+    rows = [
+        {"video": "rec_a/C10404_rgb.mp4", "verb_cls": "pick up"},
+        {"video": "rec_a/C10404_rgb.mp4", "verb_cls": "put down"},
+        {"video": "rec_b/C10404_rgb.mp4", "verb_cls": "pick up"},
+        {"video": "rec_b/C10404_rgb.mp4", "verb_cls": "put down"},
+        {"video": "rec_c/C10404_rgb.mp4", "verb_cls": "pick up"},
+        {"video": "rec_c/C10404_rgb.mp4", "verb_cls": "put down"},
+    ]
+    write_split(tmp_path / "train.csv", rows)
+
+    selected, covered, _ = select_covering_recordings(tmp_path, "train.csv", labels, 3)
+    assert len(selected) == 1
+    assert covered == labels
+
+
+def test_fill_to_limit_keeps_selecting_recordings_for_training(tmp_path: Path):
+    labels = {"pick up", "put down"}
+    rows = [
+        {"video": "rec_a/C10404_rgb.mp4", "verb_cls": "pick up"},
+        {"video": "rec_a/C10404_rgb.mp4", "verb_cls": "put down"},
+        {"video": "rec_b/C10404_rgb.mp4", "verb_cls": "pick up"},
+        {"video": "rec_b/C10404_rgb.mp4", "verb_cls": "put down"},
+        {"video": "rec_c/C10404_rgb.mp4", "verb_cls": "pick up"},
+        {"video": "rec_c/C10404_rgb.mp4", "verb_cls": "put down"},
+    ]
+    write_split(tmp_path / "train.csv", rows)
+
+    selected, covered, _ = select_covering_recordings(
+        tmp_path,
+        "train.csv",
+        labels,
+        3,
+        fill_to_limit=True,
+    )
+    assert len(selected) == 3
+    assert set(selected) == {"rec_a", "rec_b", "rec_c"}
+    assert covered == labels
+
+
 def test_cn_mirror_sets_endpoint_and_disables_xet(monkeypatch):
     monkeypatch.delenv("HF_ENDPOINT", raising=False)
     monkeypatch.delenv("HF_HUB_DISABLE_XET", raising=False)
