@@ -7,6 +7,7 @@ from tools.download_assembly101 import (
     HF_CN_ENDPOINT,
     configure_hf_endpoint,
     hf_recording_patterns,
+    lowres_filename,
     recordings_from_annotations,
     select_covering_recordings,
     split_videos,
@@ -31,6 +32,11 @@ def test_all_recordings_v8_uses_wildcard():
     assert patterns == [f"recordings/*/{FIXED_VIEWS['v8']}"]
 
 
+def test_720p_filename_mapping():
+    assert lowres_filename("C10404_rgb.mp4") == "C10404_rgb_low.mp4"
+    assert lowres_filename("HMC_21176875_mono10bit.mp4") == "HMC_21176875_mono10bit_low.mp4"
+
+
 def test_recording_selection_filters_by_verb(tmp_path: Path):
     rows = [
         {"video": "rec_b/C10404_rgb.mp4", "verb_cls": "screw"},
@@ -42,6 +48,18 @@ def test_recording_selection_filters_by_verb(tmp_path: Path):
 
     selected = recordings_from_annotations(tmp_path, {"screw", "unscrew"})
     assert selected == ["rec_b", "rec_c"]
+
+
+def test_recording_selection_respects_available_720p_set(tmp_path: Path):
+    rows = [
+        {"video": "rec_a/C10404_rgb.mp4", "verb_cls": "pick up"},
+        {"video": "rec_b/C10404_rgb.mp4", "verb_cls": "screw"},
+    ]
+    for split in ("train.csv", "validation.csv", "test.csv"):
+        write_split(tmp_path / split, rows)
+
+    selected = recordings_from_annotations(tmp_path, None, {"rec_b"})
+    assert selected == ["rec_b"]
 
 
 def test_single_recording_prefers_maximum_target_verb_coverage(tmp_path: Path):
