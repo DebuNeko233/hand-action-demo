@@ -1,7 +1,13 @@
 import csv
 from pathlib import Path
 
-from tools.download_assembly101 import FIXED_VIEWS, hf_recording_patterns, recordings_from_annotations, split_videos
+from tools.download_assembly101 import (
+    FIXED_VIEWS,
+    hf_recording_patterns,
+    recordings_from_annotations,
+    select_covering_recordings,
+    split_videos,
+)
 
 
 def write_split(path: Path, rows: list[dict[str, str]]) -> None:
@@ -33,6 +39,24 @@ def test_recording_selection_filters_by_verb(tmp_path: Path):
 
     selected = recordings_from_annotations(tmp_path, {"screw", "unscrew"})
     assert selected == ["rec_b", "rec_c"]
+
+
+def test_single_recording_prefers_maximum_target_verb_coverage(tmp_path: Path):
+    rows = [
+        {"video": "rec_a/C10404_rgb.mp4", "verb_cls": "pick up"},
+        {"video": "rec_a/C10404_rgb.mp4", "verb_cls": "put down"},
+        {"video": "rec_b/C10404_rgb.mp4", "verb_cls": "pick up"},
+        {"video": "rec_b/C10404_rgb.mp4", "verb_cls": "put down"},
+        {"video": "rec_b/C10404_rgb.mp4", "verb_cls": "position"},
+        {"video": "rec_b/C10404_rgb.mp4", "verb_cls": "screw"},
+        {"video": "rec_b/C10404_rgb.mp4", "verb_cls": "unscrew"},
+    ]
+    write_split(tmp_path / "train.csv", rows)
+
+    labels = {"pick up", "put down", "position", "screw", "unscrew"}
+    selected, covered, _ = select_covering_recordings(tmp_path, "train.csv", labels, 1)
+    assert selected == ["rec_b"]
+    assert covered == labels
 
 
 def test_split_videos():
