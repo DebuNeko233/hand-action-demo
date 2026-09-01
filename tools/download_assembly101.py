@@ -53,14 +53,19 @@ def split_videos(value: str) -> list[str]:
 
 
 def configure_hf_endpoint(mirror: str) -> str:
-    """Configure Hugging Face Hub endpoint before importing huggingface_hub."""
+    """Configure Hugging Face Hub before importing huggingface_hub."""
     if mirror == "cn":
         os.environ["HF_ENDPOINT"] = HF_CN_ENDPOINT
+        # hf-mirror can serve gated files with a HF token, but Xet metadata may
+        # redirect token refreshes back to huggingface.co. Plain HTTP avoids that
+        # mixed-endpoint auth path and is more reliable behind the mirror.
+        os.environ["HF_HUB_DISABLE_XET"] = "1"
     elif mirror == "official":
-        # Respect an explicitly supplied HF_ENDPOINT; otherwise use the official default.
         os.environ.pop("HF_ENDPOINT", None)
     endpoint = os.environ.get("HF_ENDPOINT", "https://huggingface.co")
     print(f"Hugging Face endpoint: {endpoint}")
+    if mirror == "cn":
+        print("Hugging Face Xet: disabled (mirror compatibility mode)")
     return endpoint
 
 
@@ -76,17 +81,35 @@ def ensure_git_repo(url: str, target: Path, refresh: bool = False) -> None:
     run(["git", "pull", "--ff-only"], cwd=target)
 
 
+def resolve_hf_token(explicit_token: str | None) -> str:
+    """Resolve a token explicitly so gated downloads always send auth headers."""
+    try:
+        from huggingface_hub import get_token
+    except ImportError as exc:
+        raise RuntimeError("huggingface_hub is required. Run: pip install -r requirements.txt") from exc
+
+    token = explicit_token or os.environ.get("HF_TOKEN") or get_token()
+    if not token:
+        raise RuntimeError(
+            "Assembly101 is a gated Hugging Face dataset and no access token was found. "
+            "First request/accept access on the Assembly101 Hugging Face page, then run "
+            "`hf auth login` or set HF_TOKEN. You can also pass --hf-token explicitly."
+        )
+    return token
+
+
 def hf_snapshot(root: Path, allow_patterns: list[str], token: str | None) -> None:
     try:
         from huggingface_hub import snapshot_download
     except ImportError as exc:
         raise RuntimeError("huggingface_hub is required. Run: pip install -r requirements.txt") from exc
 
+    resolved_token = resolve_hf_token(token)
     snapshot_download(
         repo_id=HF_REPO_ID,
         repo_type="dataset",
         local_dir=str(root),
-        token=token or os.environ.get("HF_TOKEN"),
+        token=resolved_token,
         allow_patterns=allow_patterns,
     )
 
@@ -264,7 +287,7 @@ def main() -> None:
     ap.add_argument("--source", choices=["hf", "gdrive"], default="hf",
                     help="Hugging Face is recommended; gdrive wraps assembly101-download-scripts.")
     ap.add_argument("--mirror", choices=["official", "cn"], default="official",
-                    help="Hugging Face endpoint. 'cn' uses https://hf-mirror.com.")
+                    help="Hugging Face endpoint. 'cn' uses https://hf-mirror.com and disables Xet for gated-download compatibility.")
     ap.add_argument("--views", choices=VIEW_CHOICES, default="v8",
                     help="Default v8 downloads one fixed RGB view. Use 'fixed' for all 8 RGB views.")
     ap.add_argument("--videos", default="all",
@@ -274,7 +297,7 @@ def main() -> None:
     ap.add_argument("--max-recordings", type=int, default=0,
                     help="When --videos=all, choose up to N recordings from EACH official split, prioritizing target-verb coverage.")
     ap.add_argument("--hf-token", default=None,
-                    help="Hugging Face token; HF_TOKEN environment variable is also supported.")
+                    help="Hugging Face token; HF_TOKEN or a token saved by `hf auth login` is also supported.")
     ap.add_argument("--skip-annotations", action="store_true")
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--client-secrets", type=Path, default=None,

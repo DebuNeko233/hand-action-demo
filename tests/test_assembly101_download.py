@@ -62,11 +62,13 @@ def test_single_recording_prefers_maximum_target_verb_coverage(tmp_path: Path):
     assert covered == labels
 
 
-def test_cn_mirror_sets_hf_endpoint(monkeypatch):
+def test_cn_mirror_sets_endpoint_and_disables_xet(monkeypatch):
     monkeypatch.delenv("HF_ENDPOINT", raising=False)
+    monkeypatch.delenv("HF_HUB_DISABLE_XET", raising=False)
     endpoint = configure_hf_endpoint("cn")
     assert endpoint == HF_CN_ENDPOINT
     assert os.environ["HF_ENDPOINT"] == HF_CN_ENDPOINT
+    assert os.environ["HF_HUB_DISABLE_XET"] == "1"
 
 
 def test_split_videos():
