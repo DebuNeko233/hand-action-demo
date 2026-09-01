@@ -5,5 +5,6 @@ __pycache__/
 models/*.pth
 models/*.task
 dataset/**/*.npy
+dataset_dhg2016/**/*.npy
 outputs/*.png
 .DS_Store
