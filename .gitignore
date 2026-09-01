@@ -9,5 +9,6 @@ dataset_dhg2016/**/*.npy
 dataset_assembly101/**/*.npy
 dataset_assembly101/metadata.csv
 dataset_assembly101/manifest.json
+data/assembly101/
 outputs/*.png
 .DS_Store
