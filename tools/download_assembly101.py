@@ -150,8 +150,12 @@ def ensure_annotations(root: Path, token: str | None, allow_download: bool) -> P
     return normalize_annotation_dir(root, existing)
 
 
-def recording_verb_counts(annotation_dir: Path, split_file: str, labels: set[str] | None = None,
-                          available_recordings: set[str] | None = None) -> dict[str, Counter[str]]:
+def recording_verb_counts(
+    annotation_dir: Path,
+    split_file: str,
+    labels: set[str] | None = None,
+    available_recordings: set[str] | None = None,
+) -> dict[str, Counter[str]]:
     counts: dict[str, Counter[str]] = defaultdict(Counter)
     with (annotation_dir / split_file).open("r", encoding="utf-8-sig", newline="") as f:
         for row in csv.DictReader(f):
@@ -168,17 +172,25 @@ def recording_verb_counts(annotation_dir: Path, split_file: str, labels: set[str
     return dict(counts)
 
 
-def recordings_from_annotations(annotation_dir: Path, labels: set[str] | None = None,
-                                available_recordings: set[str] | None = None) -> list[str]:
+def recordings_from_annotations(
+    annotation_dir: Path,
+    labels: set[str] | None = None,
+    available_recordings: set[str] | None = None,
+) -> list[str]:
     recordings: set[str] = set()
     for split_file in REQUIRED_ANNOTATION_FILES:
         recordings.update(recording_verb_counts(annotation_dir, split_file, labels, available_recordings))
     return sorted(recordings)
 
 
-def select_covering_recordings(annotation_dir: Path, split_file: str, labels: set[str] | None,
-                               max_recordings: int, available_recordings: set[str] | None = None
-                               ) -> tuple[list[str], set[str], dict[str, Counter[str]]]:
+def select_covering_recordings(
+    annotation_dir: Path,
+    split_file: str,
+    labels: set[str] | None,
+    max_recordings: int,
+    available_recordings: set[str] | None = None,
+    fill_to_limit: bool = False,
+) -> tuple[list[str], set[str], dict[str, Counter[str]]]:
     counts = recording_verb_counts(annotation_dir, split_file, labels, available_recordings)
     if not counts:
         return [], set(), {}
@@ -194,24 +206,34 @@ def select_covering_recordings(annotation_dir: Path, split_file: str, labels: se
             target_count = sum(verb_counts[v] for v in target_labels if v in verb_counts)
             balance = min((verb_counts[v] for v in target_labels if v in verb_counts), default=0)
             return new_coverage, len(verbs & target_labels), balance + target_count, name
+
         best_name, best_counts = max(remaining.items(), key=score)
         selected.append(best_name)
         covered.update(best_counts)
         del remaining[best_name]
-        if covered >= target_labels:
+        if covered >= target_labels and not fill_to_limit:
             break
     return selected, covered & target_labels, counts
 
 
-def recordings_per_split(annotation_dir: Path, labels: set[str] | None, max_per_split: int,
-                         available_recordings: set[str] | None = None
-                         ) -> tuple[dict[str, list[str]], dict[str, set[str]]]:
+def recordings_per_split(
+    annotation_dir: Path,
+    labels: set[str] | None,
+    max_per_split: int,
+    available_recordings: set[str] | None = None,
+    fill_to_limit: bool = False,
+) -> tuple[dict[str, list[str]], dict[str, set[str]]]:
     result: dict[str, list[str]] = {}
     coverage: dict[str, set[str]] = {}
     for split_file in REQUIRED_ANNOTATION_FILES:
         split = Path(split_file).stem
         selected, covered, _ = select_covering_recordings(
-            annotation_dir, split_file, labels, max_per_split, available_recordings
+            annotation_dir,
+            split_file,
+            labels,
+            max_per_split,
+            available_recordings,
+            fill_to_limit=fill_to_limit,
         )
         result[split] = selected
         coverage[split] = covered
@@ -311,8 +333,16 @@ def download_hf_official(root: Path, videos: list[str], views: str, token: str |
     official_hf_snapshot(root, hf_recording_patterns(videos, views), token)
 
 
-def download_gdrive(root: Path, videos: list[str], views: str, client_secrets: Path | None,
-                    credentials: Path | None, authenticate: bool, resume: bool, refresh_tools: bool) -> None:
+def download_gdrive(
+    root: Path,
+    videos: list[str],
+    views: str,
+    client_secrets: Path | None,
+    credentials: Path | None,
+    authenticate: bool,
+    resume: bool,
+    refresh_tools: bool,
+) -> None:
     tool_dir = root / "_official_downloader"
     ensure_git_repo(OFFICIAL_DOWNLOADER_REPO, tool_dir, refresh=refresh_tools)
     if client_secrets:
@@ -322,8 +352,16 @@ def download_gdrive(root: Path, videos: list[str], views: str, client_secrets: P
     if authenticate:
         run([sys.executable, "authenticate.py"], cwd=tool_dir)
     for video in videos:
-        cmd = [sys.executable, "download.py", "--videos", video, "--views", views,
-               "--outDir", str(root / "recordings")]
+        cmd = [
+            sys.executable,
+            "download.py",
+            "--videos",
+            video,
+            "--views",
+            views,
+            "--outDir",
+            str(root / "recordings"),
+        ]
         if resume:
             cmd.extend(["--resume", "True"])
         run(cmd, cwd=tool_dir)
@@ -331,14 +369,23 @@ def download_gdrive(root: Path, videos: list[str], views: str, client_secrets: P
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Download Assembly101 videos + official annotations for this project.")
-    ap.add_argument("--source", choices=["hf720", "hf", "gdrive"], default="hf720",
-                    help="hf720 uses public pablovela5620/assembly101-720p videos; hf uses the official gated release.")
+    ap.add_argument(
+        "--source",
+        choices=["hf720", "hf", "gdrive"],
+        default="hf720",
+        help="hf720 uses public pablovela5620/assembly101-720p videos; hf uses the official gated release.",
+    )
     ap.add_argument("--root", type=Path, default=ROOT / "data" / "assembly101")
     ap.add_argument("--mirror", choices=["official", "cn"], default="official")
     ap.add_argument("--views", choices=VIEW_CHOICES, default="v8")
     ap.add_argument("--videos", default="all")
     ap.add_argument("--labels", default=None)
     ap.add_argument("--max-recordings", type=int, default=0)
+    ap.add_argument(
+        "--fill-recordings",
+        action="store_true",
+        help="With --max-recordings, keep selecting diverse recordings up to the limit even after all target labels are covered.",
+    )
     ap.add_argument("--hf-token", default=None)
     ap.add_argument("--skip-annotations", action="store_true")
     ap.add_argument("--resume", action="store_true")
@@ -368,7 +415,11 @@ def main() -> None:
         label_filter = {x.lower() for x in split_csv_arg(args.labels)} or None
         if args.max_recordings > 0:
             by_split, coverage = recordings_per_split(
-                annotation_dir, label_filter, args.max_recordings, available_recordings
+                annotation_dir,
+                label_filter,
+                args.max_recordings,
+                available_recordings,
+                fill_to_limit=args.fill_recordings,
             )
             videos = sorted({name for names in by_split.values() for name in names})
             print("Selected recordings per official split:")
@@ -390,8 +441,16 @@ def main() -> None:
     elif args.source == "hf":
         download_hf_official(root, videos, args.views, args.hf_token)
     else:
-        download_gdrive(root, videos, args.views, args.client_secrets, args.credentials,
-                        args.authenticate, args.resume, args.refresh_tools)
+        download_gdrive(
+            root,
+            videos,
+            args.views,
+            args.client_secrets,
+            args.credentials,
+            args.authenticate,
+            args.resume,
+            args.refresh_tools,
+        )
 
     print("\nAssembly101 root:", root)
     print("Recordings:", root / "recordings")

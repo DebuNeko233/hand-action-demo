@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import random
 import re
 import sys
 from collections import Counter
@@ -22,6 +23,7 @@ from src.hand_tracker import HandTracker
 
 ANNOTATION_FPS = 30.0
 SPLIT_FILES = {"train": "train.csv", "validation": "validation.csv", "test": "test.csv"}
+SPLIT_SEED_OFFSET = {"train": 0, "validation": 1, "test": 2}
 
 
 def slugify(text: str) -> str:
@@ -71,8 +73,14 @@ def interpolate_missing(points: list[np.ndarray | None]) -> np.ndarray | None:
     return arr
 
 
-def extract_segment(video_path: Path, start_frame: int, end_frame: int, tracker: HandTracker,
-                    sequence_length: int, min_hand_ratio: float) -> tuple[np.ndarray | None, float]:
+def extract_segment(
+    video_path: Path,
+    start_frame: int,
+    end_frame: int,
+    tracker: HandTracker,
+    sequence_length: int,
+    min_hand_ratio: float,
+) -> tuple[np.ndarray | None, float]:
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
         return None, 0.0
@@ -105,6 +113,15 @@ def extract_segment(video_path: Path, start_frame: int, end_frame: int, tracker:
     return features, valid_ratio
 
 
+def split_limit(args: argparse.Namespace, split: str) -> int:
+    specific = {
+        "train": args.train_limit,
+        "validation": args.validation_limit,
+        "test": args.test_limit,
+    }[split]
+    return specific if specific > 0 else args.limit
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Assembly101 -> MediaPipe -> fixed 30x66 training samples.")
     ap.add_argument("--video-root", type=Path, required=True)
@@ -115,11 +132,22 @@ def main() -> None:
     ap.add_argument("--splits", nargs="+", choices=list(SPLIT_FILES), default=list(SPLIT_FILES))
     ap.add_argument("--min-hand-ratio", type=float, default=0.60)
     ap.add_argument("--limit", type=int, default=0,
-                    help="Maximum accepted samples PER CLASS in each split; 0 means unlimited.")
+                    help="Fallback maximum accepted samples PER CLASS in each split; 0 means unlimited.")
+    ap.add_argument("--train-limit", type=int, default=0,
+                    help="Per-class train limit; overrides --limit when > 0.")
+    ap.add_argument("--validation-limit", type=int, default=0,
+                    help="Per-class validation limit; overrides --limit when > 0.")
+    ap.add_argument("--test-limit", type=int, default=0,
+                    help="Per-class test limit; overrides --limit when > 0.")
+    ap.add_argument("--seed", type=int, default=42,
+                    help="Deterministic sampling seed used to mix segments from multiple recordings.")
     args = ap.parse_args()
 
     if not HAND_LANDMARKER_MODEL_PATH.exists():
-        raise FileNotFoundError(f"Missing MediaPipe hand model: {HAND_LANDMARKER_MODEL_PATH}. Run python tools/download_models.py first.")
+        raise FileNotFoundError(
+            f"Missing MediaPipe hand model: {HAND_LANDMARKER_MODEL_PATH}. "
+            "Run python tools/download_models.py first."
+        )
 
     label_filter = parse_filter(args.labels)
     video_index = local_video_index(args.video_root)
@@ -136,7 +164,13 @@ def main() -> None:
 
     try:
         with metadata_path.open("a", encoding="utf-8", newline="") as meta_f:
-            writer = csv.DictWriter(meta_f, fieldnames=["split", "sample", "label", "label_text", "video", "start_frame", "end_frame", "action_id", "verb_id", "noun_id", "action_cls", "verb_cls", "noun_cls", "hand_ratio"])
+            writer = csv.DictWriter(
+                meta_f,
+                fieldnames=[
+                    "split", "sample", "label", "label_text", "video", "start_frame", "end_frame",
+                    "action_id", "verb_id", "noun_id", "action_cls", "verb_cls", "noun_cls", "hand_ratio",
+                ],
+            )
             if not metadata_exists:
                 writer.writeheader()
 
@@ -157,19 +191,28 @@ def main() -> None:
                     filtered_rows.append(row)
                     available_by_class[slugify(label_text)] += 1
 
-                print(f"{split}: local target segments={len(filtered_rows)} (filtered={skipped_filter}, missing_video={skipped_missing_video})")
+                rng = random.Random(args.seed + SPLIT_SEED_OFFSET[split])
+                rng.shuffle(filtered_rows)
+                current_limit = split_limit(args, split)
+
+                print(
+                    f"{split}: local target segments={len(filtered_rows)} "
+                    f"(filtered={skipped_filter}, missing_video={skipped_missing_video})"
+                )
                 print(f"{split}: available by class={dict(sorted(available_by_class.items()))}")
+                print(f"{split}: per-class target={current_limit if current_limit > 0 else 'unlimited'} seed={args.seed}")
 
                 accepted_by_class: Counter[str] = Counter()
                 accepted = skipped_hand = skipped_limit = 0
                 target_classes = set(available_by_class)
+                accepted_recordings: set[str] = set()
 
                 for row in tqdm(filtered_rows, desc=f"Assembly101 {split}"):
                     label_text = row["verb_cls"] if args.label_level == "verb" else row["action_cls"]
                     label = slugify(label_text)
-                    if args.limit > 0 and accepted_by_class[label] >= args.limit:
+                    if current_limit > 0 and accepted_by_class[label] >= current_limit:
                         skipped_limit += 1
-                        if target_classes and all(accepted_by_class[c] >= args.limit for c in target_classes):
+                        if target_classes and all(accepted_by_class[c] >= current_limit for c in target_classes):
                             break
                         continue
 
@@ -192,19 +235,30 @@ def main() -> None:
                     out_path = out_dir / f"{sample_id}.npy"
                     np.save(out_path, features)
                     class_names.add(label)
+                    accepted_recordings.add(video_rel.split("/", 1)[0])
                     writer.writerow({
-                        "split": split, "sample": str(out_path.relative_to(args.output)), "label": label,
-                        "label_text": label_text, "video": row["video"], "start_frame": row["start_frame"],
-                        "end_frame": row["end_frame"], "action_id": row.get("action_id", ""),
-                        "verb_id": row.get("verb_id", ""), "noun_id": row.get("noun_id", ""),
-                        "action_cls": row.get("action_cls", ""), "verb_cls": row.get("verb_cls", ""),
-                        "noun_cls": row.get("noun_cls", ""), "hand_ratio": f"{hand_ratio:.3f}",
+                        "split": split,
+                        "sample": str(out_path.relative_to(args.output)),
+                        "label": label,
+                        "label_text": label_text,
+                        "video": row["video"],
+                        "start_frame": row["start_frame"],
+                        "end_frame": row["end_frame"],
+                        "action_id": row.get("action_id", ""),
+                        "verb_id": row.get("verb_id", ""),
+                        "noun_id": row.get("noun_id", ""),
+                        "action_cls": row.get("action_cls", ""),
+                        "verb_cls": row.get("verb_cls", ""),
+                        "noun_cls": row.get("noun_cls", ""),
+                        "hand_ratio": f"{hand_ratio:.3f}",
                     })
                     meta_f.flush()
                     accepted += 1
                     accepted_by_class[label] += 1
 
-                    if args.limit > 0 and target_classes and all(accepted_by_class[c] >= args.limit for c in target_classes):
+                    if current_limit > 0 and target_classes and all(
+                        accepted_by_class[c] >= current_limit for c in target_classes
+                    ):
                         break
 
                 stats[split] = {
@@ -212,6 +266,8 @@ def main() -> None:
                     "available_by_class": dict(sorted(available_by_class.items())),
                     "accepted": accepted,
                     "accepted_by_class": dict(sorted(accepted_by_class.items())),
+                    "accepted_recordings": len(accepted_recordings),
+                    "accepted_recording_names": sorted(accepted_recordings),
                     "skipped_filter": skipped_filter,
                     "skipped_missing_video": skipped_missing_video,
                     "skipped_hand": skipped_hand,
@@ -221,9 +277,14 @@ def main() -> None:
         tracker.close()
 
     manifest = {
-        "dataset": "Assembly101", "annotation_fps": ANNOTATION_FPS,
-        "sequence_length": SEQUENCE_LENGTH, "input_size": 66,
-        "label_level": args.label_level, "class_names": sorted(class_names), "stats": stats,
+        "dataset": "Assembly101",
+        "annotation_fps": ANNOTATION_FPS,
+        "sequence_length": SEQUENCE_LENGTH,
+        "input_size": 66,
+        "label_level": args.label_level,
+        "class_names": sorted(class_names),
+        "sampling_seed": args.seed,
+        "stats": stats,
     }
     (args.output / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     print(json.dumps(manifest, indent=2))

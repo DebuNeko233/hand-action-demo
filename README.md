@@ -44,6 +44,53 @@ python tools/train.py
 
 Best checkpoint: `models/hand_action_lstm.pth`. Training curve: `outputs/training_curve.png`.
 
+## Assembly101 one-command training
+
+For the Assembly101 primitive-action model, the easiest entry point is now:
+
+```bash
+python train.py
+```
+
+Default actions are `pick up`, `put down`, `position`, `screw`, and `unscrew`. The script automatically:
+
+1. reuses/downloads public `pablovela5620/assembly101-720p` `v8` videos;
+2. selects multiple recordings from each official train/validation/test split;
+3. extracts MediaPipe Hands features with deterministic mixed-recording sampling;
+4. builds balanced train/validation/test samples;
+5. trains `HandActionLSTM`, evaluates the best checkpoint, and saves it to `models/hand_action_assembly101_lstm.pth`.
+
+The normal preset uses up to 4 recordings per split with 100 train, 30 validation, and 30 test samples per class. Existing raw videos are never deleted and are reused on later runs. If a previously generated feature dataset already satisfies the target size, `train.py` skips MediaPipe preprocessing and trains directly.
+
+Quick pipeline check:
+
+```bash
+python train.py --quick
+```
+
+Force a clean feature rebuild while still keeping downloaded videos:
+
+```bash
+python train.py --force-rebuild
+```
+
+Train exactly the existing `dataset_assembly101` without download/preprocessing:
+
+```bash
+python train.py --reuse-dataset
+```
+
+Customize the training size when needed:
+
+```bash
+python train.py \
+  --recordings 6 \
+  --train-per-class 150 \
+  --validation-per-class 40 \
+  --test-per-class 40 \
+  --epochs 80
+```
+
 ## DHG-2016 / DHG-14 baseline
 
 This branch can train the same LSTM from the DHG-14/28 skeleton data. The 14-class labels are:
