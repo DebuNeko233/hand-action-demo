@@ -13,7 +13,11 @@ def test_dhg_mapping_and_feature_shape():
 
 
 def test_dhg_constants():
-    assert len(DHG14_CLASS_NAMES) == 14
+    assert DHG14_CLASS_NAMES == [
+        "grab", "expand", "pinch", "rotation_cw", "rotation_ccw", "tap",
+        "swipe_right", "swipe_left", "swipe_up", "swipe_down",
+        "swipe_x", "swipe_v", "swipe_plus", "shake",
+    ]
     assert DHG_TO_MEDIAPIPE21.tolist() == [0] + list(range(2, 22))
 
 
