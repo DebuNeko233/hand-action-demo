@@ -1,5 +1,6 @@
 from __future__ import annotations
 import argparse
+from pathlib import Path
 import cv2
 from config import *
 from src.camera import Camera
@@ -16,13 +17,15 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--camera", type=int, default=CAMERA_INDEX)
     ap.add_argument("--debug", action="store_true")
+    ap.add_argument("--checkpoint", type=Path, default=MODEL_PATH,
+                    help="Checkpoint to use. For DHG-2016: models/hand_action_dhg14_lstm.pth")
     args = ap.parse_args()
 
     camera = Camera(args.camera, CAMERA_WIDTH, CAMERA_HEIGHT)
     tracker = HandTracker(HAND_LANDMARKER_MODEL_PATH, MAX_NUM_HANDS)
     extractor = StatefulFeatureExtractor()
     buffer = SequenceBuffer(SEQUENCE_LENGTH, INPUT_SIZE)
-    predictor = Predictor(MODEL_PATH)
+    predictor = Predictor(args.checkpoint)
     smoother = PredictionSmoother(SMOOTHING_WINDOW, CONFIDENCE_THRESHOLD)
     fps_meter = FPSMeter()
     no_hand = 0
