@@ -93,6 +93,48 @@ def print_dataset_summary(dataset: Path, classes: list[str]) -> None:
         print(f"  {split:10s} recordings={recording_count} | {counts}")
 
 
+def choose_baseline_recordings(
+    annotation_dir: Path,
+    labels: str,
+    recordings_per_split: int,
+    views: str,
+    mirror: str,
+) -> tuple[dict[str, list[str]], list[str]]:
+    from tools.download_assembly101 import (
+        available_720p_recordings,
+        configure_hf_endpoint,
+        recordings_per_split as select_per_split,
+    )
+
+    configure_hf_endpoint(mirror)
+    available = available_720p_recordings(views)
+    label_filter = {x.strip().lower() for x in labels.split(",") if x.strip()}
+    by_split, coverage = select_per_split(
+        annotation_dir,
+        label_filter,
+        recordings_per_split,
+        available,
+        fill_to_limit=True,
+    )
+
+    print("\nBaseline recording selection:")
+    for split in ("train", "validation", "test"):
+        names = by_split.get(split, [])
+        covered = ", ".join(sorted(coverage.get(split, set()))) or "none"
+        print(f"  {split}: {len(names)} recording(s), covered verbs: {covered}")
+        if len(names) < recordings_per_split:
+            raise RuntimeError(
+                f"{split} only has {len(names)} selectable 720p recordings; requested {recordings_per_split}."
+            )
+        missing = label_filter - coverage.get(split, set())
+        if missing:
+            raise RuntimeError(f"{split} cannot cover target verbs: {', '.join(sorted(missing))}")
+
+    selected = sorted({name for names in by_split.values() for name in names})
+    print(f"  total unique recordings: {len(selected)}")
+    return by_split, selected
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description="Assembly101 基础动作 baseline：自动准备数据 -> MediaPipe -> LSTM -> 验证/测试 -> 保存最佳模型。"
@@ -101,7 +143,7 @@ def main() -> None:
     ap.add_argument("--force-rebuild", action="store_true", help="强制重新生成骨架训练集；原始 720p 视频仍会复用。")
     ap.add_argument("--reuse-dataset", action="store_true", help="只训练现有 dataset_assembly101；仍会检查类别、样本量和 recording 数。")
     ap.add_argument("--labels", default=DEFAULT_LABELS, help="逗号分隔的 Assembly101 verb 类别。")
-    ap.add_argument("--recordings", type=int, default=None, help="每个官方 split 最多下载/使用多少个 recording。")
+    ap.add_argument("--recordings", type=int, default=None, help="每个官方 split 固定选择多少个 recording。")
     ap.add_argument("--train-per-class", type=int, default=None)
     ap.add_argument("--validation-per-class", type=int, default=None)
     ap.add_argument("--test-per-class", type=int, default=None)
@@ -133,8 +175,6 @@ def main() -> None:
         epochs = args.epochs or 5
         min_train_recordings = min_eval_recordings = 1
     else:
-        # Baseline v1: enough subject/session diversity to stop treating one recording as a model benchmark,
-        # while keeping the public 720p download and MediaPipe preprocessing cost practical.
         recordings = args.recordings or 6
         train_limit = args.train_per_class or 150
         validation_limit = args.validation_per_class or 50
@@ -170,7 +210,7 @@ def main() -> None:
     print("\nAssembly101 基础动作模型 baseline v1")
     print(f"  模式: {'QUICK' if args.quick else 'BASELINE'}")
     print(f"  类别: {', '.join(classes)}")
-    print(f"  视频: hf720 / {args.views} / 每 split 最多 {recordings} 个 recording")
+    print(f"  视频: hf720 / {args.views} / 每 split 固定 {recordings} 个 recording")
     print(f"  最低多样性: train>={min_train_recordings} recordings, val/test>={min_eval_recordings}")
     print(f"  样本: train={train_limit}/class, validation={validation_limit}/class, test={test_limit}/class")
     print(f"  训练: epochs<={epochs}, batch={args.batch_size}, lr={args.lr}, early_stop={args.early_stop_patience}")
@@ -205,6 +245,22 @@ def main() -> None:
             print("\nMediaPipe hand landmarker 模型不存在，自动下载...")
             run([sys.executable, "tools/download_models.py"])
 
+        annotations = data_root / "annotations" / "fine-grained-annotations"
+        if not all((annotations / name).exists() for name in ("train.csv", "validation.csv", "test.csv")):
+            raise FileNotFoundError(
+                f"Missing official Assembly101 fine-grained annotations under {annotations}."
+            )
+
+        _, selected_recordings = choose_baseline_recordings(
+            annotations,
+            args.labels,
+            recordings,
+            args.views,
+            args.mirror,
+        )
+        selected_csv = ",".join(selected_recordings)
+
+        # Download exactly the deterministic recording set chosen above. Existing files are reused.
         run([
             sys.executable,
             "tools/download_assembly101.py",
@@ -212,13 +268,12 @@ def main() -> None:
             "--source", "hf720",
             "--mirror", args.mirror,
             "--views", args.views,
-            "--videos", "all",
-            "--labels", args.labels,
-            "--max-recordings", str(recordings),
-            "--fill-recordings",
+            "--videos", selected_csv,
+            "--skip-annotations",
         ])
 
-        annotations = data_root / "annotations" / "fine-grained-annotations"
+        # Preprocess only this fixed set. Extra recordings already present in the local cache
+        # must not silently change a repeat of the same baseline experiment.
         run([
             sys.executable,
             "tools/prepare_assembly101.py",
@@ -227,6 +282,7 @@ def main() -> None:
             "--output", str(dataset),
             "--label-level", "verb",
             "--labels", args.labels,
+            "--recordings", selected_csv,
             "--min-hand-ratio", str(args.min_hand_ratio),
             "--train-limit", str(train_limit),
             "--validation-limit", str(validation_limit),
