@@ -1,0 +1,9 @@
+mediapipe==1.0.1
+opencv-python>=4.10,<5
+numpy>=1.26,<3
+torch>=2.3
+torchvision>=0.18
+scikit-learn>=1.5
+matplotlib>=3.8
+tqdm>=4.66
+pytest>=8.2
