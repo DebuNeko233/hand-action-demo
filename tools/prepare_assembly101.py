@@ -81,8 +81,6 @@ def extract_segment(
     if not cap.isOpened():
         return None, 0.0
 
-    # Assembly101 temporal annotations are defined at 30 fps. Sampling by time
-    # keeps the code correct even when the stored video has another frame rate.
     start_sec = max(0.0, float(start_frame) / ANNOTATION_FPS)
     end_sec = max(start_sec, float(end_frame) / ANNOTATION_FPS)
     if end_sec <= start_sec:
@@ -146,7 +144,9 @@ def main() -> None:
     metadata_path = args.output / "metadata.csv"
     metadata_exists = metadata_path.exists()
 
-    tracker = HandTracker(HAND_LANDMARKER_MODEL_PATH, max_num_hands=1)
+    # Offline extraction samples independent frames from annotated intervals.
+    # IMAGE mode avoids unnecessary temporal graph state and is safer on macOS.
+    tracker = HandTracker(HAND_LANDMARKER_MODEL_PATH, max_num_hands=1, running_mode="image")
     class_names: set[str] = set()
     stats: dict[str, dict[str, int]] = {}
 
