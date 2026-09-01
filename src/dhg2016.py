@@ -3,8 +3,12 @@ from pathlib import Path
 import re
 import numpy as np
 
+# Official DHG-14 gesture ids:
+# 1 Grab, 2 Expand, 3 Pinch, 4 Rotation CW, 5 Rotation CCW, 6 Tap,
+# 7 Swipe Right, 8 Swipe Left, 9 Swipe Up, 10 Swipe Down,
+# 11 Swipe X, 12 Swipe V, 13 Swipe +, 14 Shake.
 DHG14_CLASS_NAMES = [
-    "grab", "tap", "expand", "pinch", "rotation_cw", "rotation_ccw",
+    "grab", "expand", "pinch", "rotation_cw", "rotation_ccw", "tap",
     "swipe_right", "swipe_left", "swipe_up", "swipe_down",
     "swipe_x", "swipe_v", "swipe_plus", "shake",
 ]
